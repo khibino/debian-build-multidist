@@ -109,6 +109,10 @@ while expr $# '>' 0 > /dev/null ; do
 			local_mirror="$(echo ${mdarg#--local-mirror=})"
 			;;
 
+		"--local-components="*)
+			local_components="$(echo ${mdarg#--local-components=})"
+			;;
+
 		"--extra-packages"*)
 			extra_packages="$(echo ${mdarg#--extra-packages=})"
 			;;
@@ -409,6 +413,7 @@ EOF
 "
 
 		othermirror_str=''
+		mirror=''
 
 		case x"$codename" in
 			xlenny|xetch)
@@ -427,7 +432,8 @@ EOF
 		fi
 
 		if [ x"$local_mirror" != x ]; then
-			with_local_mirror_str="deb $local_mirror|deb-src $local_mirror"
+			local_mirror_line="$local_mirror $codename $local_components"
+			with_local_mirror_str="deb $local_mirror_line|deb-src $local_mirror_line"
 			if [ x"$othermirror_str" = x ]; then
 				othermirror_str="${with_local_mirror_str}"
 			else
