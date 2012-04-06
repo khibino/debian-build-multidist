@@ -93,11 +93,11 @@ $(deb_dist_list):
 dist: deb-src-dist $(deb_dist_list)
 
 release: deb-clean
-	cvs commit
-	cvs update -dP
-	cvs tag -d $(rel_tag)
-	cvs tag $(rel_tag)
+	hg pull
+	hg update
 	make dpkg
+	hg tag -d $(rel_tag)
+	hg tag $(rel_tag)
 
 ##
 ## end of $Source$
