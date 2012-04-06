@@ -96,7 +96,7 @@ release: deb-clean
 	hg pull
 	hg update
 	make dpkg
-	hg tag -d $(rel_tag)
+	hg tag --remove $(rel_tag) || true
 	hg tag $(rel_tag)
 
 ##
