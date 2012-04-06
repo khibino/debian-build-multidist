@@ -1,0 +1,13 @@
+Source: build-multidist
+Section: devel
+Priority: extra
+Maintainer: Kei HIBINO <hibi@utmc.or.jp>
+Build-Depends: debhelper (>= 5)
+Standards-Version: 3.9.1
+
+Package: build-multidist
+Architecture: all
+Depends: ${misc:Depends}, pbuilder, cowbuilder | cowdancer (<= 0.49), wget
+Description: pbuilder and cowbuilder wrapper for multi-distribution
+ build-multidist is a wrapper of (p|cow)builder constructing
+ environments of multi-distribution and bi-architectures.

@@ -1,0 +1,38 @@
+build-multidist (0.3.0) unstable; urgency=low
+
+  * Remove broken codes.
+  * Support for debian archive mirror.
+
+ -- Kei HIBINO <hibi@utmc.or.jp>  Fri, 06 Apr 2012 10:41:51 +0900
+
+builder-multidist (0.2.1) unstable; urgency=low
+
+  * Update version string along with debian local package policy.
+  * Bugfix.
+
+ -- Kei HIBINO <hibi@utmc.or.jp>  Fri, 17 Feb 2012 15:10:17 +0900
+
+builder-multidist (0.2.0-1) unstable; urgency=low
+
+  * Revert not using ia32-apt.
+  * original pbuilderrc requires bash.
+
+ -- KEI HIBINO <hibi@utmc.or.jp>  Tue, 19 Oct 2010 12:36:49 +0900
+
+builder-multidist (0.1-1) unstable; urgency=low
+
+  * Upgrade against original pbuilder.
+
+ -- KEI HIBINO <hibi@utmc.or.jp>  Wed, 15 Jul 2009 12:15:45 +0900
+
+builder-multidist (0.0-2) unstable; urgency=low
+
+  * Fix dependency for stable.
+
+ -- KEI HIBINO <hibi@utmc.or.jp>  Mon, 13 Apr 2009 15:18:42 +0900
+
+builder-multidist (0.0-1) unstable; urgency=low
+
+  * Initial release.
+
+ -- KEI HIBINO <hibi@utmc.or.jp>  Wed, 25 Mar 2009 20:22:38 +0900

@@ -1,0 +1,520 @@
+#! /bin/bash
+## -*- SH -*-
+## $Header$
+##
+
+PATH='/usr/sbin:/sbin:/usr/bin:/bin'
+
+
+set -e
+
+exec 5>&1
+
+progname=$(basename $0)
+usage() {
+	cat<<EOF >&5
+Usage: $progname [ [--distlist=...] [--archlist=...] -- ] PBUILDER_ARGUMENT ...
+
+Examples:
+  $progname --target=squeeze/i386 -- --build .dsc-file ...
+
+  $progname --archlist=i386,amd64 -- --create ...
+  $progname --distlist=squeeze,sid -- --create ...
+  $progname --archlist=ALL --distlist=lenny -- --create ...
+  $progname --create ...
+
+  $progname --archlist=i386,amd64 -- --build .dsc-file ...
+  $progname --distlist=squeeze,sid -- --build .dsc-file ...
+  $progname --archlist=ALL --distlist=lenny --build .dsc-file ...
+  $progname --build .dsc-file ...
+
+  Default target to process distributions and architectures are ALL.
+  ALL archlist to process biarch architectures.
+  ALL distlist to process stable testing and unstable distribution.
+EOF
+}
+
+case $progname in
+	pbuilder-md)
+		builder_mode=pbuilder
+		;;
+	cowbuilder-md)
+		builder_mode=cowbuilder
+		;;
+	*)
+		usage
+		exit 1
+		;;
+esac
+
+esecho() {
+	echo -e "$1"
+}
+
+log_err() {
+	esecho "$1" >&5
+}
+
+log_warn() {
+	esecho "$1" >&5
+}
+
+log_info() {
+	esecho "$1" >&5
+}
+
+log_pipe() {
+	cat >& 5
+}
+
+err_and_die() {
+	log_err "$1"
+	exit "$2"
+}
+
+while expr $# '>' 0 > /dev/null ; do
+	mdarg=$1
+	case "$mdarg" in
+		"-t="*)
+			target="${mdarg#-t=}"
+			distlist="${target%/*}"
+			archlist="${target#*/}"
+			;;
+
+		"--target="*)
+			target="${mdarg#--target=}"
+			distlist="${target%/*}"
+			archlist="${target#*/}"
+			;;
+
+		"-dl="*)
+			distlist="$(echo ${mdarg#-d=} | sed 's/,/ /g')"
+			;;
+		"--distlist="*)
+			distlist="$(echo ${mdarg#--distlist=} | sed 's/,/ /g')"
+			;;
+
+		"-al="*)
+			archlist="$(echo ${mdarg#-a=} | sed 's/,/ /g')"
+			;;
+		"--archlist="*)
+			archlist="$(echo ${mdarg#--archlist=} | sed 's/,/ /g')"
+			;;
+
+		"--add-components="*)
+			additional_components="$(echo ${mdarg#--add-components=})"
+			;;
+
+		"--local-mirror="*)
+			local_mirror="$(echo ${mdarg#--local-mirror=})"
+			;;
+
+		"--extra-packages"*)
+			extra_packages="$(echo ${mdarg#--extra-packages=})"
+			;;
+
+		-h|--help)
+			usage
+			exit 0
+			;;
+
+		-v|--version)
+			echo "$progname @version@"
+			exit 0
+			;;
+
+		"--")
+			shift
+			break
+			;;
+
+		--create|--update|--build|--execute|--clean|--login)
+			break
+			;;
+
+		*)
+			log_err "Unknown pbuilder-md argument '$mdarg'
+pbuilder-md's arguments must be prepended to pbuilder arguments!\n"
+			usage
+			exit 1
+			;;
+	esac
+	shift
+done
+
+cmd="$1"
+
+if [ x"$cmd" = x ]; then
+	usage
+	exit 0
+fi
+shift
+
+if [ x"$distlist" = x ]; then
+	distlist=ALL
+fi
+
+if [ x"$archlist" = x ]; then
+	archlist=ALL
+fi
+
+if [ -x $(pwd)/post-create-hook.sh ]; then
+	lib_top=$(pwd)
+else
+	lib_top=/usr/lib/pbuilder/multidist
+fi
+
+work_top=/var/cache/pbuilder/multidist
+
+build_place=${work_top}/build
+build_top=${build_place}/$$
+logfile=${build_place}/${$}.log
+
+
+master_site=http://ftp.debian.org/debian
+archive_master_site=http://archive.debian.org/debian
+
+for rc in \
+	/usr/share/pbuilder/pbuilderrc \
+	/etc/pbuilder/pbuilderrc \
+	${HOME}/.pbuilderrc \
+	; do
+	test -r $rc && . $rc
+done
+
+
+if [ x$MIRRORSITE = x ]; then
+	err_and_die "MIRRORSITE value is null string.\nWrong setup?" 1
+fi
+
+case "$cmd" in
+	--login)
+		;;
+	*)
+		log_info "All trace output is logged to $logfile" >&5
+		exec 1> $logfile 2>&1
+		;;
+esac
+set -x
+
+md_work=${build_top}/pbuilder-md-work
+mkdir -p ${md_work}
+
+clean_up() {
+	##rm -r ${md_work}
+	##rmdir ${build_top} || true
+	true
+}
+
+mach=$(uname -m)
+case $mach in
+	i*86)
+		biarch_list='i386'
+		major_arch='i386'
+		;;
+
+	x86_64)
+		biarch_list='i386 amd64'
+		major_arch='i386'
+		;;
+
+	*)
+		log_warn "Not implemented against ${mach}."
+		exit 1
+		;;
+esac
+
+check_arch() {
+	local arch=$1
+	local sup
+
+	for sup in $biarch_list ; do
+		if [ x"$arch" = x"$sup" ]; then
+			sup=good
+			break;
+		fi
+	done
+
+	if [ x"$sup" != xgood ]; then
+		return 1
+	fi
+	return 0
+}
+
+if [ x"$archlist" != xALL ]; then
+	for arch in $archlist ; do
+		check_arch $arch || \
+			err_and_die "Not supported architecture ${arch}. Available list is $biarch_list" 1
+	done
+else
+	archlist="$biarch_list"
+fi
+
+known_suite_list='unstable testing stable'
+
+
+get_suite() {
+	local rel="$1"
+	grep '^Suite: ' ${rel} | sed 's/^Suite: //'
+}
+
+get_codename() {
+	local rel="$1"
+	grep '^Codename: ' ${rel} | sed 's/^Codename: //'
+}
+
+probe_codename_info() {
+	local name="$1"
+
+	local suite=''
+	local codename=''
+
+	for trysuite in $known_suite_list ; do
+		if [ x"$trysuite" = x"$name" ]; then
+			suite="$trysuite"
+			break
+		fi
+	done
+
+	local url=${master_site}/dists/${name}/Release
+	local arc_url=${archive_master_site}/dists/${name}/Release
+
+	local relfile=''
+	local rellink=''
+	local reldest=''
+
+	if [ x"$suite" = x ]; then
+		codename="$name"
+		relfile=${md_work}/Release.${codename}
+		reldest=$relfile
+	else
+		rellink=${md_work}/Release.${suite}
+		reldest=$rellink
+	fi
+
+	if [ ! -s ${reldest} ]; then
+		$PBUILDERROOTCMD wget -O ${reldest} ${url} 2>&1 | log_pipe
+		if [ ! -s ${reldest} ]; then
+			$PBUILDERROOTCMD wget -O ${reldest} ${arc_url} 2>&1 | log_pipe
+			if [ ! -s ${reldest} ]; then
+				log_err "Fail to get Release file against ${name}! Wrong suite or codename?"
+				return
+			fi
+		fi
+
+		if [ x"$rellink" != x ]; then
+			if [ $suite != $(get_suite "${reldest}") ]; then
+				log_err "Inconsistent Release file: ${rel}, ${url}"
+				return
+			fi
+
+
+			codename=$(get_codename "${reldest}")
+			if [ x"$codename" = x ]; then
+				log_err "Codename line not found in Release file: ${rel}, ${url}"
+				return
+			fi
+
+			relfile=${md_work}/Release.${codename}
+			mv "$rellink" "$relfile"
+			ln -s $(basename "$relfile") "$rellink"
+		else
+			if [ $codename != $(get_codename "${reldest}") ]; then
+				log_err "Inconsistent Release file: ${rel}, ${url}"
+				return
+			fi
+
+			suite=$(get_suite "${reldest}")
+		fi
+	fi
+
+
+	if [ x"$suite" != x ]; then
+		log_info "Codename: ${codename} (${suite})"
+		echo "$codename $suite"
+	else
+		log_info "Codename: ${codename} (no suite)"
+		echo "$codename"
+	fi
+}
+
+suite2codename() {
+	local suite=$1
+	probe_codename_info "$suite" | cut -d ' ' -f 1
+}
+
+codename2suite() {
+	local codename="$1"
+	probe_codename_info "$codename" | cut -s -d ' ' -f 2
+}
+
+if [ x"$distlist" = xALL ]; then
+	distlist=$known_suite_list
+fi
+
+mayduplist=''
+for dist in $distlist ; do
+	codename=$(suite2codename $dist)
+	if [ x"${codename}" = x ]; then
+		log_warn "Unknown distribution name ${dist}"
+		exit 1
+	fi
+	mayduplist="$mayduplist $codename"
+done
+ulist="$(for codename in $mayduplist ; do
+		echo $codename
+		done | sort -u)"
+distlist="$(echo $ulist)"
+unset mayduplist ulist dist
+
+log_info "Target architectures are [ $archlist ].\nTarget codenames are [ $distlist ]."
+
+components='main'
+expkg_option=''
+
+if [ x"$additional_components" != x ]; then
+	components="$components $additional_components"
+fi
+
+case $builder_mode in
+	pbuilder)
+		builder=pbuilder
+		no_cowdancer_update=
+		;;
+	cowbuilder)
+		builder=cowbuilder
+		no_cowdancer_update=--no-cowdancer-update
+		;;
+	*)
+		exit 1
+		;;
+esac
+
+for arch in $archlist; do
+	for codename in $distlist; do
+		log_info "Processing ${codename}/${arch}..."
+
+		cache_top=${work_top}/${codename}
+		base_arc=${cache_top}/base-${arch}.tgz
+		base_cow=${cache_top}/base-${arch}.cow
+
+		customrc=${md_work}/${$}.pbuilderrc
+		cat <<EOF > $customrc
+
+EOF
+
+		loc_options="
+--aptcache ${cache_top}/aptcache/
+--buildplace ${build_place}
+"
+
+		othermirror_str=''
+
+		case x"$codename" in
+			xlenny|xetch)
+				security_url='http://archive.debian.org/debian-security'
+				mirror='--mirror http://archive.debian.org/debian'
+				;;
+
+			*)
+				security_url='http://security.debian.org/'
+				;;
+		esac
+
+		security_line="$security_url ${codename}/updates $components"
+		if [ x"$codename" != xsid ]; then
+			othermirror_str="deb $security_line|deb-src $security_line"
+		fi
+
+		if [ x"$local_mirror" != x ]; then
+			with_local_mirror_str="deb $local_mirror|deb-src $local_mirror"
+			if [ x"$othermirror_str" = x ]; then
+				othermirror_str="${with_local_mirror_str}"
+			else
+				othermirror_str="${othermirror_str}|${with_local_mirror_str}"
+			fi
+		fi
+
+		case $builder_mode in
+			pbuilder)
+				loc_options="
+$loc_options
+--basetgz ${base_arc}
+"
+				;;
+
+			cowbuilder)
+				loc_options="
+$loc_options
+--basepath ${base_cow}
+"
+				if [ x"$codename" = xetch ]; then
+					loc_options="
+$loc_options
+--debian-etch-workaround
+"
+				fi
+				;;
+
+			*)
+				exit 1
+				;;
+		esac
+
+		case "$cmd" in
+			--build|--debuild)
+				if [ x"$arch" != x"$major_arch" ]; then
+					loc_options="
+$loc_options
+--binary-arch
+"
+				fi
+				;;
+			*)
+				;;
+		esac
+
+		case "$cmd" in
+			--create|--update)
+
+
+				for d in result aptcache pbuildd pbuilder-mnt pbuilder-umlresult; do
+					mkdir -p ${cache_top}/$d
+				done
+
+				$builder $cmd \
+					$loc_options \
+					--distribution "$codename" \
+					--override-config \
+					$no_cowdancer_update \
+					--extrapackages "$extra_packages" \
+					$mirror \
+					--othermirror "${othermirror_str}" \
+					--components "$components" \
+					"$@" \
+					--debootstrapopts --arch=$arch \
+					&& $builder --execute --save-after-exec $loc_options $no_cowdancer_update -- ${lib_top}/post-create-hook.sh update \
+					&& continue
+
+				log_info "Failed."
+				;;
+			*)
+				loc_options="
+$loc_options
+--buildresult ${cache_top}/result/
+"
+
+				$builder $cmd \
+					$loc_options \
+					--distribution "$codename" \
+					"$@" && continue
+
+				log_info "Failed."
+				;;
+		esac
+	done
+done
+
+##
+## end of $Source$
+##
